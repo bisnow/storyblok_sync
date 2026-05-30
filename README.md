@@ -67,7 +67,7 @@ jobs:
 
       - name: Sync dev → prod
         id: sync
-        uses: <org>/storyblok-sync@main   # no release yet — see note below
+        uses: bisnow/storyblok_sync@v1
         with:
           dev-token:  ${{ secrets.SB_DEV_TOKEN }}
           prod-token: ${{ secrets.SB_PROD_TOKEN }}
@@ -83,10 +83,9 @@ jobs:
           git push
 ```
 
-> **Pinning the action ref:** this repo has no tags/releases yet, so `@main` is
-> currently the only option. Once a release is cut, pin to a tag (e.g. `@v1`) or
-> a commit SHA for stability — `@main` tracks the tip of the default branch and
-> can change under you.
+> **Pinning the action ref:** `@v1` tracks the latest 1.x release and picks up
+> fixes automatically. For a fully reproducible build, pin to an immutable ref
+> instead — `@v1.0.0` or a commit SHA.
 
 Because the push uses the checkout's `GITHUB_TOKEN`, it won't re-trigger
 workflows; the `[skip ci]` is extra insurance (and required if you swap to a PAT
