@@ -10,6 +10,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
     "test": "vitest run",
     "test:watch": "vitest",

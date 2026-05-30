@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Keep the committed action bundle (dist/) in sync with its source.
+#
+# This action runs dist/index.js directly at runtime (runs.using: node20) with
+# no build step, so dist/ must be committed alongside any source change. When a
+# commit touches a build input, rebuild and stage dist/ automatically — that way
+# the reviewed PR diff always reflects exactly what ships, and CI's "verify
+# dist/ is up to date" check never fails on a forgotten rebuild.
+#
+# Caveat: this rebuilds from the working tree, so partially-staged source
+# changes (git add -p) will bundle the unstaged edits too. Rare for this repo.
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# Only rebuild when something that affects the bundle is staged.
+if ! printf '%s\n' "$staged" | grep -qE '^(src/|package\.json$|package-lock\.json$|tsconfig\.json$)'; then
+  exit 0
+fi
+
+echo "pre-commit: build inputs changed — rebuilding dist/…"
+npm run build
+
+git add dist/
