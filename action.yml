@@ -1,0 +1,73 @@
+name: 'Storyblok dev → prod sync'
+description: >-
+  Promote the Storyblok components, assets and stories named in
+  .storyblok_sync/*.json from a dev space to a prod space, remapping every
+  cross-space reference via the Management API.
+author: 'Bisnow'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  dev-space-id:
+    description: 'Source (dev) space id.'
+    required: false
+    default: '571000060559187'
+  prod-space-id:
+    description: 'Target (prod) space id.'
+    required: false
+    default: '571151439874644'
+  region:
+    description: 'Storyblok region for both spaces (eu | us | ca | ap | cn).'
+    required: false
+    default: 'us'
+  dev-token:
+    description: 'Personal access token with read access to the dev space.'
+    required: true
+  prod-token:
+    description: 'Personal access token with write access to the prod space (may equal dev-token).'
+    required: true
+  sync-dir:
+    description: 'Directory in the consumer repo holding the *.json sync files.'
+    required: false
+    default: '.storyblok_sync'
+  dry-run:
+    description: 'When true, log the planned writes without calling the API.'
+    required: false
+    default: 'false'
+  update-stories:
+    description: 'After assets change, repair asset references in existing prod stories not in this sync set.'
+    required: false
+    default: 'true'
+  prune-presets:
+    description: 'Delete stale presets of a synced component that no longer exist in dev.'
+    required: false
+    default: 'true'
+  fail-on-partial:
+    description: 'Exit non-zero when some (but not all) items fail.'
+    required: false
+    default: 'true'
+  debug:
+    description: 'Force-visible debug logging, including every MAPI call. Also auto-on under GitHub step-debug.'
+    required: false
+    default: 'false'
+  clear-processed-files:
+    description: 'Delete each sync file whose items all succeeded from the working tree (the workflow commits the deletions).'
+    required: false
+    default: 'false'
+
+outputs:
+  components-synced:
+    description: 'Number of components created or updated.'
+  assets-synced:
+    description: 'Number of assets created or updated.'
+  stories-synced:
+    description: 'Number of stories created or updated.'
+  summary:
+    description: 'Human-readable one-line summary of the run.'
+  cleared-files:
+    description: 'Comma-separated list of sync files the action deleted (for the workflow to commit).'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

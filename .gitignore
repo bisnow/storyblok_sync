@@ -1,0 +1,7 @@
+node_modules/
+*.log
+coverage/
+.DS_Store
+.idea/
+.vscode/
+# dist/ is intentionally committed — the action runs the bundled output.

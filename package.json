@@ -1,0 +1,31 @@
+{
+  "name": "storyblok-sync",
+  "version": "1.0.0",
+  "description": "Reusable GitHub Action that promotes Storyblok components, assets and stories from a dev space to a prod space via the Management API.",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && git diff --exit-code dist/ || (echo 'dist/ is out of date — run npm run build and commit' && exit 1)"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@storyblok/management-api-client": "^0.2.4",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.7.3",
+    "undici": "^8.3.0",
+    "vitest": "^2.1.8"
+  }
+}
