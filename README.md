@@ -67,7 +67,7 @@ jobs:
 
       - name: Sync dev → prod
         id: sync
-        uses: <org>/storyblok-sync@v1
+        uses: <org>/storyblok-sync@main   # no release yet — see note below
         with:
           dev-token:  ${{ secrets.SB_DEV_TOKEN }}
           prod-token: ${{ secrets.SB_PROD_TOKEN }}
@@ -82,6 +82,11 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: clear synced storyblok files [skip ci]"
           git push
 ```
+
+> **Pinning the action ref:** this repo has no tags/releases yet, so `@main` is
+> currently the only option. Once a release is cut, pin to a tag (e.g. `@v1`) or
+> a commit SHA for stability — `@main` tracks the tip of the default branch and
+> can change under you.
 
 Because the push uses the checkout's `GITHUB_TOKEN`, it won't re-trigger
 workflows; the `[skip ci]` is extra insurance (and required if you swap to a PAT
