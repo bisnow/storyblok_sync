@@ -7,6 +7,13 @@ name: Update major version tag
 #
 # `released` (not `published`) excludes pre-releases, so a v2.0.0-beta.1 release
 # will not move the stable major tag.
+#
+# Requires a secret TAG_PUSH_TOKEN: a token (fine-grained PAT with Contents:
+# write on this repo, or a GitHub App token) belonging to an identity on the
+# org tag-ruleset bypass list. The org "Tag Create" ruleset blocks updates to
+# refs/tags/v*, and the default GITHUB_TOKEN is not exempt — so the push must
+# authenticate as a bypassing identity (e.g. a repo/org admin). checkout
+# persists this token, so the later `git push` uses it.
 
 on:
   release:
@@ -21,7 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # need all tags to peel the release tag to its commit
+          fetch-depth: 0                        # need all tags to peel the release tag to its commit
+          token: ${{ secrets.TAG_PUSH_TOKEN }}  # admin/bypass identity; see header
 
       - name: Move major tag to the released commit
         env:
