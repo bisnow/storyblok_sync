@@ -27574,11 +27574,8 @@ const optionalBoolean = (name, fallback) => {
     }
     return core.getBooleanInput(name);
 };
-const requiredNumber = (name, fallback) => {
-    const raw = core.getInput(name);
-    if (raw === '') {
-        return fallback;
-    }
+const requiredNumber = (name) => {
+    const raw = core.getInput(name, { required: true });
     const value = Number(raw);
     if (!Number.isFinite(value)) {
         throw new Error(`Input "${name}" must be a number, received "${raw}".`);
@@ -27589,8 +27586,8 @@ function readConfig() {
     const devToken = core.getInput('dev-token', { required: true });
     const prodToken = core.getInput('prod-token', { required: true });
     return {
-        devSpaceId: requiredNumber('dev-space-id', 571000060559187),
-        prodSpaceId: requiredNumber('prod-space-id', 571151439874644),
+        devSpaceId: requiredNumber('dev-space-id'),
+        prodSpaceId: requiredNumber('prod-space-id'),
         region: core.getInput('region') || 'us',
         devToken,
         prodToken,

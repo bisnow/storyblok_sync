@@ -27,11 +27,8 @@ const optionalBoolean = (name: string, fallback: boolean): boolean => {
   return core.getBooleanInput(name);
 };
 
-const requiredNumber = (name: string, fallback: number): number => {
-  const raw = core.getInput(name);
-  if (raw === '') {
-    return fallback;
-  }
+const requiredNumber = (name: string): number => {
+  const raw = core.getInput(name, { required: true });
   const value = Number(raw);
   if (!Number.isFinite(value)) {
     throw new Error(`Input "${name}" must be a number, received "${raw}".`);
@@ -44,8 +41,8 @@ export function readConfig(): Config {
   const prodToken = core.getInput('prod-token', { required: true });
 
   return {
-    devSpaceId: requiredNumber('dev-space-id', 571000060559187),
-    prodSpaceId: requiredNumber('prod-space-id', 571151439874644),
+    devSpaceId: requiredNumber('dev-space-id'),
+    prodSpaceId: requiredNumber('prod-space-id'),
     region: core.getInput('region') || 'us',
     devToken,
     prodToken,

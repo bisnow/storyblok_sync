@@ -11,12 +11,10 @@ branding:
 inputs:
   dev-space-id:
     description: 'Source (dev) space id.'
-    required: false
-    default: '571000060559187'
+    required: true
   prod-space-id:
     description: 'Target (prod) space id.'
-    required: false
-    default: '571151439874644'
+    required: true
   region:
     description: 'Storyblok region for both spaces (eu | us | ca | ap | cn).'
     required: false

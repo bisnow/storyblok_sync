@@ -4,4 +4,5 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+.claude/        # local planning/scratch docs — not for the public repo
 # dist/ is intentionally committed — the action runs the bundled output.

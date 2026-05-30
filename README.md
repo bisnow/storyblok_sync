@@ -69,6 +69,8 @@ jobs:
         id: sync
         uses: bisnow/storyblok_sync@v1
         with:
+          dev-space-id:  '1234567'           # your source (dev) space id
+          prod-space-id: '7654321'           # your target (prod) space id
           dev-token:  ${{ secrets.SB_DEV_TOKEN }}
           prod-token: ${{ secrets.SB_PROD_TOKEN }}
           clear-processed-files: true
@@ -97,8 +99,8 @@ deletes fully-succeeded files from the working tree and reports them via the
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `dev-space-id` | `571000060559187` | Source (dev) space id. |
-| `prod-space-id` | `571151439874644` | Target (prod) space id. |
+| `dev-space-id` | _(required)_ | Source (dev) space id. |
+| `prod-space-id` | _(required)_ | Target (prod) space id. |
 | `region` | `us` | Region for both spaces (`eu`/`us`/`ca`/`ap`/`cn`). Both clients are created per space — they need not share a region. |
 | `dev-token` | _(required)_ | Personal access token with read access to the dev space. |
 | `prod-token` | _(required)_ | Personal access token with write access to the prod space (may equal `dev-token`). |
