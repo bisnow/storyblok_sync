@@ -15,7 +15,7 @@ const schemas: ComponentSchemas = { page: { img: { type: 'asset' } } } as unknow
 
 const prodAssetMap: AssetMap = new Map([[
   55,
-  { old: {} as any, new: { id: 55, filename: 'https://prod.example/new.png', meta_data: {} } as any },
+  { old: { id: 55, filename: 'https://prod.example/old.png' } as any, new: { id: 55, filename: 'https://prod.example/new.png', meta_data: {} } as any },
 ]]);
 
 const storyWithRef = { id: 1, uuid: 'a', parent_id: 0, slug: 's1', full_slug: 'en/s1', published: true, unpublished_changes: false, content: { _uid: 'x', component: 'page', img: { fieldtype: 'asset', id: 55, filename: 'https://prod.example/old.png' } } };
@@ -42,10 +42,15 @@ describe('updateStoriesAssetRefs', () => {
     expect(counts).toMatchObject({ updated: 1, skipped: 1, failed: 0 });
   });
 
-  it('narrows the scan with reference_search when exactly one asset changed', async () => {
+  it('narrows the scan with reference_search on each asset\'s OLD filename (never the whole space)', async () => {
     const prod = makeProd();
     await updateStoriesAssetRefs({ prodClient: prod, prodSpaceId: 2, schemas, prodAssetMap, dryRun: false, logger: silentLogger });
-    expect((prod.stories as any).list.mock.calls[0][0].query.reference_search).toBe('https://prod.example/new.png');
+    // Existing prod stories hold the pre-replace url, so we search the OLD filename.
+    expect((prod.stories as any).list.mock.calls[0][0].query.reference_search).toBe('https://prod.example/old.png');
+    // Every list call is scoped by reference_search — no unfiltered whole-space scan.
+    for (const call of (prod.stories as any).list.mock.calls) {
+      expect(call[0].query.reference_search).toBeTruthy();
+    }
   });
 
   it('makes no write calls in dry-run', async () => {

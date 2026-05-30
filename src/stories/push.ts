@@ -130,7 +130,6 @@ export async function pushStories(options: PushStoriesOptions): Promise<StoryPus
               ...(entry.is_startpage && resolvedParentId != null ? { is_startpage: true } : {}),
               ...(entry.component ? { content: { _uid: '', component: entry.component } } : {}),
             },
-            publish: 0,
           },
         } as any),
         `stories.create(${entry.full_slug})`,
@@ -174,7 +173,12 @@ export async function pushStories(options: PushStoriesOptions): Promise<StoryPus
       }
       else {
         unwrap(
-          await prodClient.stories.update(prodId, { path: { space_id: prodSpaceId }, body: { story: mapped, publish } } as any),
+          // Two payload deltas vs. the prior (failing) version, matching the proven
+          // monoblok CLI: send `force_update` (the CLI always does; omitting it was a
+          // prime suspect for the universal 422s) and omit `publish` when falsy
+          // instead of sending `publish: 0`. We use force_update '1' (not the CLI's
+          // '0' default) so a promotion always wins over a locked/in-edit prod story.
+          await prodClient.stories.update(prodId, { path: { space_id: prodSpaceId }, body: { story: mapped, force_update: '1', ...(publish ? { publish } : {}) } } as any),
           `stories.update(${prodId})`,
         );
       }

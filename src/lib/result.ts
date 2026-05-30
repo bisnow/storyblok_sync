@@ -23,9 +23,20 @@ export class SyncError extends Error {
  */
 export function unwrap<T>(result: ApiResponse<T>, context = 'MAPI request'): T {
   if (result.error) {
-    const status = result.response?.status;
-    const body = (result.error as { data?: unknown })?.data;
-    const detail = body ? ` — ${stringifyError(body)}` : '';
+    // The MAPI client's `result.error` is a ClientError whose HTTP body lives at
+    // `error.response.data` (NOT `error.data`); status/statusText live there too.
+    // Reading `.data` directly always yielded undefined, so 422 validation
+    // messages were silently dropped from the thrown error.
+    const clientError = result.error as {
+      response?: { status?: number; statusText?: string; data?: unknown };
+    };
+    const status = clientError.response?.status ?? result.response?.status;
+    const body = clientError.response?.data;
+    const detail = body !== undefined && body !== null && body !== ''
+      ? ` — ${stringifyError(body)}`
+      : clientError.response?.statusText
+        ? ` — ${clientError.response.statusText}`
+        : '';
     throw new SyncError(`${context} failed${status ? ` (HTTP ${status})` : ''}${detail}`, {
       status,
       cause: result.error,

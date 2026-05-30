@@ -32673,9 +32673,18 @@ class SyncError extends Error {
  */
 function unwrap(result, context = 'MAPI request') {
     if (result.error) {
-        const status = result.response?.status;
-        const body = result.error?.data;
-        const detail = body ? ` — ${stringifyError(body)}` : '';
+        // The MAPI client's `result.error` is a ClientError whose HTTP body lives at
+        // `error.response.data` (NOT `error.data`); status/statusText live there too.
+        // Reading `.data` directly always yielded undefined, so 422 validation
+        // messages were silently dropped from the thrown error.
+        const clientError = result.error;
+        const status = clientError.response?.status ?? result.response?.status;
+        const body = clientError.response?.data;
+        const detail = body !== undefined && body !== null && body !== ''
+            ? ` — ${stringifyError(body)}`
+            : clientError.response?.statusText
+                ? ` — ${clientError.response.statusText}`
+                : '';
         throw new SyncError(`${context} failed${status ? ` (HTTP ${status})` : ''}${detail}`, {
             status,
             cause: result.error,
@@ -38158,6 +38167,22 @@ const storyRefMapper = (story, { schemas, maps }) => {
 const isStoryPublishedWithoutChanges = (story) => Boolean(story.published && !story.unpublished_changes);
 
 ;// CONCATENATED MODULE: ./src/assets/update-stories.ts
+/**
+ * Update-stories pass: after assets are replaced, repair their references in
+ * prod stories that already exist (and are NOT in this sync's story set — those
+ * get correct refs during the story push). Mirrors the CLI's
+ * `mapAssetReferencesInStoriesPipeline`:
+ *
+ *  - Trigger only when at least one pre-existing prod asset changed (the caller
+ *    checks `changed`).
+ *  - For each replaced asset, find candidate stories with
+ *    `query.reference_search` on the asset's OLD (pre-replace) filename — that is
+ *    the URL existing prod stories still hold — and union the matches. We never
+ *    list the whole space (that scan was the slow path that had to be canceled).
+ *  - Remap with the prod-id-keyed asset map (stories map empty), and update only
+ *    stories whose content actually changed.
+ */
+
 
 
 
@@ -38174,13 +38199,21 @@ async function updateStoriesAssetRefs(options) {
         logger.warning('Skipping update-stories: no component schemas available to identify asset fields.');
         return counts;
     }
-    const values = [...prodAssetMap.values()];
-    const referenceSearch = values.length === 1 ? values[0].new.filename : undefined;
-    const listStories = await listAll(page => prodClient.stories.list({
-        path: { space_id: prodSpaceId },
-        query: referenceSearch ? { page, reference_search: referenceSearch } : { page },
-    }), (data) => (data.stories ?? []), 'stories.list(prod)');
-    logger.info(`Checking ${listStories.length} prod stor${listStories.length === 1 ? 'y' : 'ies'} for asset references to repair…`);
+    // One narrow search per replaced asset, unioned by story id. Existing prod
+    // stories reference the asset's OLD url (pre-replace), normalized the same way
+    // the ref-mapper writes asset urls into content — so that is what we search.
+    // Searching the NEW filename (the prior behavior) matched nothing, since no
+    // existing story holds it yet.
+    const candidates = new Map();
+    for (const { old, new: replacement } of prodAssetMap.values()) {
+        const term = normalizeAssetUrl(old?.filename ?? replacement.filename);
+        const matches = await listAll(page => prodClient.stories.list({ path: { space_id: prodSpaceId }, query: { page, reference_search: term } }), (data) => (data.stories ?? []), `stories.list(prod, ref=${term})`);
+        for (const story of matches) {
+            candidates.set(story.id, story);
+        }
+    }
+    const listStories = [...candidates.values()];
+    logger.info(`Checking ${listStories.length} prod stor${listStories.length === 1 ? 'y' : 'ies'} referencing ${prodAssetMap.size} replaced asset(s)…`);
     await pMap(listStories, async (listStory) => {
         try {
             const full = unwrap(await prodClient.stories.get(listStory.id, { path: { space_id: prodSpaceId } }), `stories.get(${listStory.id})`);
@@ -38195,7 +38228,7 @@ async function updateStoriesAssetRefs(options) {
                 logger.info(`[dry-run] would update asset refs in prod story "${story.full_slug || story.slug}" (id ${story.id})`);
             }
             else {
-                unwrap(await prodClient.stories.update(story.id, { path: { space_id: prodSpaceId }, body: { story: mapped, publish } }), `stories.update(${story.id})`);
+                unwrap(await prodClient.stories.update(story.id, { path: { space_id: prodSpaceId }, body: { story: mapped, force_update: '1', ...(publish ? { publish } : {}) } }), `stories.update(${story.id})`);
             }
             counts.updated += 1;
         }
@@ -38705,7 +38738,6 @@ async function pushStories(options) {
                         ...(entry.is_startpage && resolvedParentId != null ? { is_startpage: true } : {}),
                         ...(entry.component ? { content: { _uid: '', component: entry.component } } : {}),
                     },
-                    publish: 0,
                 },
             }), `stories.create(${entry.full_slug})`).story;
             storyMap.set(entry.id, created.id);
@@ -38746,7 +38778,13 @@ async function pushStories(options) {
                 logger.info(`[dry-run] would update story "${entry.full_slug}" (publish=${publish})`);
             }
             else {
-                unwrap(await prodClient.stories.update(prodId, { path: { space_id: prodSpaceId }, body: { story: mapped, publish } }), `stories.update(${prodId})`);
+                unwrap(
+                // Two payload deltas vs. the prior (failing) version, matching the proven
+                // monoblok CLI: send `force_update` (the CLI always does; omitting it was a
+                // prime suspect for the universal 422s) and omit `publish` when falsy
+                // instead of sending `publish: 0`. We use force_update '1' (not the CLI's
+                // '0' default) so a promotion always wins over a locked/in-edit prod story.
+                await prodClient.stories.update(prodId, { path: { space_id: prodSpaceId }, body: { story: mapped, force_update: '1', ...(publish ? { publish } : {}) } }), `stories.update(${prodId})`);
             }
             succeededDevIds.add(entry.id);
             if (origin.get(entry.id) === 'created') {
