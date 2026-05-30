@@ -1,0 +1,41 @@
+name: Update major version tag
+
+# When a non-prerelease GitHub Release is published, move the major-version tag
+# (e.g. v1) to the released commit so consumers pinned to @v1 always resolve to
+# the latest stable 1.x. Immutable tags (v1.2.3) are never touched, and @main
+# stays the bleeding edge.
+#
+# `released` (not `published`) excludes pre-releases, so a v2.0.0-beta.1 release
+# will not move the stable major tag.
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: write
+
+jobs:
+  move-major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need all tags to peel the release tag to its commit
+
+      - name: Move major tag to the released commit
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::Release tag '$TAG' is not vMAJOR.MINOR.PATCH — skipping major-tag update."
+            exit 0
+          fi
+          MAJOR="${TAG%%.*}"                       # v1.2.3 -> v1
+          COMMIT="$(git rev-parse "$TAG^{commit}")"
+          echo "Moving $MAJOR -> $TAG (${COMMIT:0:7})"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$MAJOR" "$COMMIT"
+          git push -f origin "refs/tags/$MAJOR"
