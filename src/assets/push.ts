@@ -2,7 +2,7 @@
  * Asset push orchestrator (injected clients). For each requested filename:
  * search dev, download each match's binary, resolve its folder into prod
  * (match/create by name, best-effort hierarchy), then upsert into prod —
- * updating the existing asset (matched by `short_filename`) or creating a new
+ * replacing the existing asset (matched by `short_filename`) or creating a new
  * one. Records two map views:
  *
  *   - `assetMap`     keyed by **dev** asset id — for the story push (content
@@ -11,7 +11,11 @@
  *                    assets that were replaced — for the update-stories pass
  *                    (existing prod stories reference prod ids).
  *
- * Updates re-`get` the asset so the new CDN filename is captured.
+ * Every upsert goes through `assets.upload` (not `create`/`update`): it is the
+ * only SDK method that forwards `size` to the sign request, which is what bakes
+ * the `WIDTHxHEIGHT` segment into the resulting CDN URL (see `parseAssetSize`).
+ * Each upsert then re-`get`s the asset so the final CDN filename + metadata are
+ * captured in the map.
  */
 import type { Logger } from '../logger';
 import { toError, unwrap } from '../lib/result';
@@ -59,6 +63,22 @@ const toMapped = (asset: Asset): AssetMapped => ({
   is_private: asset.is_private,
   meta_data: asset.meta_data,
 });
+
+/**
+ * Extracts the `WIDTHxHEIGHT` dimensions segment Storyblok bakes into image
+ * asset URLs (e.g. `.../f/123/1400x900/abc/hero.png` → `"1400x900"`) so it can
+ * be forwarded as the sign request's `size`. Without it Storyblok omits the
+ * segment from the new URL, which breaks consumers that parse dimensions out of
+ * the URL — the Storyblok PHP image service, for one, throws "Unable to extract
+ * dimensions from URL". Mirrors that consumer's regex (`#/(\d+)x(\d+)/#`).
+ *
+ * Returns undefined for assets without a dimensions segment (e.g. PDFs), so we
+ * only forward `size` when the source actually has one.
+ */
+export const parseAssetSize = (filename: string | undefined): string | undefined => {
+  const match = filename?.match(/\/(\d+)x(\d+)\//);
+  return match ? `${match[1]}x${match[2]}` : undefined;
+};
 
 const writableMetadata = (asset: Asset) => ({
   alt: asset.alt,
@@ -148,29 +168,43 @@ export async function pushAssets(options: PushAssetsOptions): Promise<AssetPushR
     }
 
     const fileBuffer = await download(devAsset.filename);
+    const size = parseAssetSize(devAsset.filename);
+
+    // Upload through `assets.upload` rather than `create`/`update`: it is the
+    // only method that forwards `size` to the sign request, preserving the
+    // source's `WIDTHxHEIGHT` URL segment. A `prodExisting.id` makes the upload
+    // replace that asset's file in place; otherwise it creates a new one.
+    const uploaded = await prodClient.assets.upload({
+      path: { space_id: prodSpaceId },
+      body: {
+        short_filename: devAsset.short_filename,
+        asset_folder_id: prodFolderId,
+        is_private: devAsset.is_private,
+        ...(prodExisting ? { id: prodExisting.id } : {}),
+        ...(size ? { size } : {}),
+      },
+      file: fileBuffer,
+    } as any) as Asset;
+
+    // `upload` does not set writable metadata (alt/title/…), so apply it after.
+    await prodClient.assets.update(uploaded.id, {
+      path: { space_id: prodSpaceId },
+      body: { asset: { asset_folder_id: prodFolderId, ...writableMetadata(devAsset) } },
+    } as any);
+
+    // Re-`get` to capture the final stored state (CDN filename + metadata).
+    const fresh = unwrap(await prodClient.assets.get(uploaded.id, { path: { space_id: prodSpaceId } }), `assets.get(${uploaded.id})`) as Asset;
+    const mapped = toMapped(fresh);
+    assetMap.set(devAsset.id, { old: devAsset, new: mapped });
 
     if (prodExisting) {
-      await prodClient.assets.update(prodExisting.id, {
-        path: { space_id: prodSpaceId },
-        body: { asset: { asset_folder_id: prodFolderId, ...writableMetadata(devAsset) }, short_filename: prodExisting.short_filename },
-        file: fileBuffer,
-      } as any);
-      const fresh = unwrap(await prodClient.assets.get(prodExisting.id, { path: { space_id: prodSpaceId } }), `assets.get(${prodExisting.id})`) as Asset;
-      const mapped = toMapped(fresh);
-      assetMap.set(devAsset.id, { old: devAsset, new: mapped });
       prodAssetMap.set(prodExisting.id, { old: prodExisting, new: mapped });
       counts.updated += 1;
-      logger.debug(`Replaced prod asset "${devAsset.short_filename}" (prod id ${prodExisting.id})`);
+      logger.debug(`Replaced prod asset "${devAsset.short_filename}" (prod id ${prodExisting.id})${size ? ` [${size}]` : ''}`);
     }
     else {
-      const created = await prodClient.assets.create({
-        path: { space_id: prodSpaceId },
-        body: { short_filename: devAsset.short_filename, asset_folder_id: prodFolderId, ...writableMetadata(devAsset) },
-        file: fileBuffer,
-      } as any) as Asset;
-      assetMap.set(devAsset.id, { old: devAsset, new: toMapped(created) });
       counts.created += 1;
-      logger.debug(`Created prod asset "${devAsset.short_filename}" (prod id ${created.id})`);
+      logger.debug(`Created prod asset "${devAsset.short_filename}" (prod id ${uploaded.id})${size ? ` [${size}]` : ''}`);
     }
   }
 }

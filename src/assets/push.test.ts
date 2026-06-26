@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { pushAssets } from './push';
+import { parseAssetSize, pushAssets } from './push';
 import { silentLogger } from '../logger';
 import type { SyncClient } from '../types';
 
@@ -19,10 +19,22 @@ const baseOptions = (devClient: SyncClient, prodClient: SyncClient) => ({
   download: vi.fn(async () => new ArrayBuffer(8)),
 });
 
-const makeDev = () => ({
-  assets: { list: vi.fn(async () => okList('assets', [devAsset])) },
+const makeDev = (filename = 'https://dev.example/hero.png') => ({
+  assets: { list: vi.fn(async () => okList('assets', [{ ...devAsset, filename }])) },
   assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) },
 } as unknown as SyncClient);
+
+describe('parseAssetSize', () => {
+  it('extracts the WIDTHxHEIGHT segment from a Storyblok asset URL', () => {
+    expect(parseAssetSize('https://a.storyblok.com/f/1/1400x900/abc/hero.png')).toBe('1400x900');
+    expect(parseAssetSize('https://s3.amazonaws.com/a.storyblok.com/f/1/640x480/abc/hero.png')).toBe('640x480');
+  });
+
+  it('returns undefined when there is no dimensions segment', () => {
+    expect(parseAssetSize('https://a.storyblok.com/f/1/abc/doc.pdf')).toBeUndefined();
+    expect(parseAssetSize(undefined)).toBeUndefined();
+  });
+});
 
 describe('pushAssets', () => {
   it('creates a new prod asset when none matches and maps by dev id', async () => {
@@ -30,18 +42,41 @@ describe('pushAssets', () => {
     const prod = {
       assets: {
         list: vi.fn(async () => okList('assets', [])), // no existing prod asset
-        create: vi.fn(async () => ({ id: 500, short_filename: 'hero.png', filename: 'https://prod.example/hero.png' })),
+        upload: vi.fn(async () => ({ id: 500, short_filename: 'hero.png', filename: 'https://prod.example/hero.png' })),
+        update: vi.fn(async () => undefined),
+        get: vi.fn(async () => okData({ id: 500, short_filename: 'hero.png', filename: 'https://prod.example/hero.png' })),
       },
       assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) },
     } as unknown as SyncClient;
 
     const result = await pushAssets({ ...baseOptions(dev, prod), dryRun: false });
 
-    expect((prod.assets as any).create).toHaveBeenCalledTimes(1);
+    expect((prod.assets as any).upload).toHaveBeenCalledTimes(1);
+    // No dimensions in the source URL → no `size` forwarded, and no replace `id`.
+    const uploadBody = (prod.assets as any).upload.mock.calls[0][0].body;
+    expect(uploadBody.size).toBeUndefined();
+    expect(uploadBody.id).toBeUndefined();
     expect(result.counts).toMatchObject({ created: 1, updated: 0 });
     expect(result.assetMap.get(10)?.new.id).toBe(500);
     expect(result.changed).toBe(false);
     expect([...result.succeededFilenames]).toEqual(['hero.png']);
+  });
+
+  it('forwards the WIDTHxHEIGHT dimensions parsed from the dev URL to the upload', async () => {
+    const dev = makeDev('https://s3.amazonaws.com/a.storyblok.com/f/1/1400x900/abc/hero.png');
+    const prod = {
+      assets: {
+        list: vi.fn(async () => okList('assets', [])),
+        upload: vi.fn(async () => ({ id: 500, short_filename: 'hero.png', filename: 'https://a.storyblok.com/f/2/1400x900/def/hero.png' })),
+        update: vi.fn(async () => undefined),
+        get: vi.fn(async () => okData({ id: 500, short_filename: 'hero.png', filename: 'https://a.storyblok.com/f/2/1400x900/def/hero.png' })),
+      },
+      assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) },
+    } as unknown as SyncClient;
+
+    await pushAssets({ ...baseOptions(dev, prod), dryRun: false });
+
+    expect((prod.assets as any).upload.mock.calls[0][0].body).toMatchObject({ size: '1400x900' });
   });
 
   it('replaces an existing prod asset, re-gets the new filename and maps by both dev and prod id', async () => {
@@ -50,6 +85,7 @@ describe('pushAssets', () => {
     const prod = {
       assets: {
         list: vi.fn(async () => okList('assets', [existing])),
+        upload: vi.fn(async () => ({ id: 55, short_filename: 'hero.png', filename: 'https://prod.example/new.png' })),
         update: vi.fn(async () => undefined),
         get: vi.fn(async () => okData({ id: 55, short_filename: 'hero.png', filename: 'https://prod.example/new.png', meta_data: { k: 1 } })),
       },
@@ -58,7 +94,9 @@ describe('pushAssets', () => {
 
     const result = await pushAssets({ ...baseOptions(dev, prod), dryRun: false });
 
-    expect((prod.assets as any).update).toHaveBeenCalledTimes(1);
+    expect((prod.assets as any).upload).toHaveBeenCalledTimes(1);
+    // Replace path passes the existing prod id so the upload swaps in place.
+    expect((prod.assets as any).upload.mock.calls[0][0].body).toMatchObject({ id: 55 });
     expect(result.counts).toMatchObject({ updated: 1, created: 0 });
     expect(result.assetMap.get(10)?.new.filename).toBe('https://prod.example/new.png');
     expect(result.prodAssetMap.get(55)?.new.filename).toBe('https://prod.example/new.png');
@@ -70,14 +108,14 @@ describe('pushAssets', () => {
     const prod = {
       assets: {
         list: vi.fn(async () => okList('assets', [{ id: 55, short_filename: 'hero.png', filename: 'https://prod.example/old.png' }])),
-        update: vi.fn(), create: vi.fn(), get: vi.fn(),
+        upload: vi.fn(), update: vi.fn(), create: vi.fn(), get: vi.fn(),
       },
       assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) },
     } as unknown as SyncClient;
 
     const result = await pushAssets({ ...baseOptions(dev, prod), dryRun: true });
+    expect((prod.assets as any).upload).not.toHaveBeenCalled();
     expect((prod.assets as any).update).not.toHaveBeenCalled();
-    expect((prod.assets as any).create).not.toHaveBeenCalled();
     expect(result.counts).toMatchObject({ updated: 1 });
   });
 
