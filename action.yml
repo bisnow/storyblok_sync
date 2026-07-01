@@ -67,5 +67,5 @@ outputs:
     description: 'Comma-separated list of sync files the action deleted (for the workflow to commit).'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
