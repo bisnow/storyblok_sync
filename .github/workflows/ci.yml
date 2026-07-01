@@ -28,3 +28,40 @@ jobs:
             git --no-pager diff --stat dist/
             exit 1
           fi
+
+  # Keep the moving major tag (e.g. v1) pointed at the latest green main commit,
+  # so consumers pinned to @v1 always resolve to the newest passing build — no
+  # GitHub Release required. Gated on `verify`, so v1 only ever moves to a commit
+  # whose committed dist/ bundle is proven current. The major is read from
+  # package.json: a future bump to 2.x moves v2 and freezes v1 at its last commit.
+  #
+  # Requires the TAG_PUSH_TOKEN secret (an identity on the org tag-ruleset bypass
+  # list); the org "Tag Create" ruleset blocks refs/tags/v* for the default
+  # GITHUB_TOKEN. checkout persists this token so the later `git push` uses it.
+  tag:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # If a newer main push arrives, cancel this move so v1 never lands on an
+    # older commit than the newest green one.
+    concurrency:
+      group: move-major-tag
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.TAG_PUSH_TOKEN }}
+      - name: Move major tag to this commit
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version package.json)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::package.json version '$VERSION' is not semver."
+            exit 1
+          fi
+          MAJOR="v${VERSION%%.*}"                 # 1.0.0 -> v1
+          echo "Moving $MAJOR -> ${GITHUB_SHA:0:7} (package.json version $VERSION)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$MAJOR" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$MAJOR"
