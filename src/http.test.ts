@@ -4,14 +4,41 @@
  * reach: header-driven pagination, and the three-step asset upload flow
  * (sign → S3 POST → finalize → get, then metadata update).
  *
- * The installed `undici` major matches Node's built-in undici, so
- * `setGlobalDispatcher(mockAgent)` makes the native global `fetch` (used by the
- * SDK) route through the MockAgent.
+ * `setGlobalDispatcher(mockAgent)` only reroutes the native global `fetch` (used
+ * by the SDK) when the installed `undici` major equals Node's built-in undici
+ * major — otherwise the two manipulate different globals and the request escapes
+ * to the real network (ENOTFOUND). The repo pins both to Node 24 / undici 7 via
+ * .nvmrc + the `undici` devDependency; the guard below fails loudly on CI if that
+ * ever drifts, and skips (not silently passes) on a mismatched local Node.
  */
+import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Dispatcher, getGlobalDispatcher, MockAgent, setGlobalDispatcher } from 'undici';
 import { createManagementApiClient } from '@storyblok/management-api-client';
 import { listAll } from './lib/paginate';
+
+const installedUndiciMajor = String(createRequire(import.meta.url)('undici/package.json').version).split('.')[0];
+const builtinUndiciMajor = String(process.versions.undici ?? '').split('.')[0];
+const undiciMatches = installedUndiciMajor === builtinUndiciMajor;
+const onCI = Boolean(process.env.CI);
+
+describe('http test environment', () => {
+  it('installed undici major matches Node built-in (required for MockAgent interception)', () => {
+    // On CI a mismatch must fail here rather than let the real-SDK suites skip
+    // and silently drop coverage. Locally we tolerate a mismatched Node — the
+    // suites below skip with a note instead of a cryptic ENOTFOUND.
+    if (onCI) {
+      expect(
+        undiciMatches,
+        `Node built-in undici (${builtinUndiciMajor}.x) must match installed undici (${installedUndiciMajor}.x); `
+        + `align .nvmrc and the \`undici\` devDependency (currently Node 24 / undici 7).`,
+      ).toBe(true);
+    }
+    else if (!undiciMatches) {
+      console.warn(`[http.test] real-SDK suites skipped: Node undici ${builtinUndiciMajor}.x != installed ${installedUndiciMajor}.x — use the Node in .nvmrc.`);
+    }
+  });
+});
 
 let agent: MockAgent;
 let originalDispatcher: Dispatcher;
@@ -37,7 +64,7 @@ afterEach(async () => {
   await agent.close();
 });
 
-describe('pagination (real SDK + MockAgent)', () => {
+describe.skipIf(!undiciMatches)('pagination (real SDK + MockAgent)', () => {
   it('walks every page using the Total / Per-Page headers', async () => {
     agent.get('http://mapi.mock')
       .intercept({ path: (p: string) => p.startsWith('/v1/spaces/2/stories'), method: 'GET' })
@@ -54,7 +81,7 @@ describe('pagination (real SDK + MockAgent)', () => {
   });
 });
 
-describe('asset upload flow (real SDK + MockAgent)', () => {
+describe.skipIf(!undiciMatches)('asset upload flow (real SDK + MockAgent)', () => {
   it('signs, uploads to S3, finalizes, gets, then updates metadata', async () => {
     const calls = { signed: false, uploaded: false, finalized: false, gets: 0, metadataUpdated: false };
     const sb = agent.get('http://mapi.mock');

@@ -35,7 +35,7 @@ npm run package              # build + fail if dist/ has uncommitted changes
 
 - **Package is CommonJS** (`"type": "commonjs"`) so the ncc bundle runs under `node20`. Source uses ESM `import` syntax; ncc/esbuild handle that regardless. **Do NOT set `"type": "module"`** — it breaks the bundled action at runtime.
 - **vitest must be ≥3** (ships Vite 6+). vitest 2 + Vite 5 emit a CJS-deprecation warning because the package is CJS.
-- **HTTP tests require the installed `undici` major to match Node's built-in** (`process.versions.undici`, currently 8.x). Only then does `setGlobalDispatcher(new MockAgent())` intercept the native global `fetch` the SDK uses. A mismatched major silently fails to intercept.
+- **HTTP tests require the installed `undici` major to match Node's built-in** (`process.versions.undici`). The repo pins both to the same Node via `.nvmrc` (Node 24 → built-in undici 7) and the `undici` devDependency (`^7`); CI reads `.nvmrc`. Only when the majors match does `setGlobalDispatcher(new MockAgent())` intercept the native global `fetch` the SDK uses — a mismatch silently fails to intercept and the request escapes to the network (ENOTFOUND). `src/http.test.ts` guards this: it fails loudly on CI and skips (with a note) on a mismatched local Node. If you bump the Node major, bump `undici` to match (and vice-versa).
 
 ## Architecture
 

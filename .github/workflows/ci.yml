@@ -10,15 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Run tests on the Node whose built-in undici major matches the pinned
-      # `undici` devDependency (^8 → Node 26). src/http.test.ts drives the real
+      # Test on the Node pinned in .nvmrc (24 — the same runtime the action ships
+      # on, per action.yml). Its built-in undici major must match the pinned
+      # `undici` devDependency (^7 → Node 24): src/http.test.ts drives the real
       # SDK through undici's MockAgent, which only intercepts the global fetch
-      # when the two undici majors match; on Node 24 (undici 7) interception
-      # silently fails and the request escapes (ENOTFOUND mapi.mock). This is the
-      # CI/test runtime only — the action itself still ships on node24 (action.yml).
+      # when the two undici majors match — a mismatch escapes to the network as
+      # ENOTFOUND. Keeping the version in .nvmrc keeps CI, local dev, and the
+      # action runtime on one Node.
       - uses: actions/setup-node@v6
         with:
-          node-version: 26
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Typecheck
