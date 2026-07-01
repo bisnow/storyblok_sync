@@ -37796,10 +37796,29 @@ async function pMap(items, mapper, concurrency = 6) {
 
 ;// CONCATENATED MODULE: ./src/assets/find.ts
 
+
 async function findDevAssets(client, spaceId, filename) {
-    const all = await listAll(page => client.assets.list({ path: { space_id: spaceId }, query: { page, per_page: 100, search: filename } }), (data) => (data.assets ?? []), `assets.list(search=${filename})`);
-    const exact = all.filter(asset => asset.short_filename === filename);
-    return { exact, all };
+    const all = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+        const result = await client.assets.list({
+            path: { space_id: spaceId },
+            query: { page, per_page: 100, search: filename, sort_by: 'short_filename:asc' },
+        });
+        const data = unwrap(result, `assets.list(search=${filename}, page ${page})`);
+        all.push(...(data.assets ?? []));
+        // Short-circuit: once the exact short_filename appears we have everything any
+        // caller needs, so stop paginating the fuzzy result set. sort_by keeps this
+        // to page 1 for generic names in the common case.
+        const exact = all.filter(asset => asset.short_filename === filename);
+        if (exact.length > 0) {
+            return { exact, all };
+        }
+        totalPages = totalPagesFromHeaders(result.response.headers);
+        page += 1;
+    } while (page <= totalPages);
+    return { exact: [], all };
 }
 
 ;// CONCATENATED MODULE: ./src/assets/push.ts
