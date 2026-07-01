@@ -119,6 +119,43 @@ describe('pushAssets', () => {
     expect(result.counts).toMatchObject({ updated: 1 });
   });
 
+  it('creates a shared asset folder only once when concurrent assets reference it', async () => {
+    const folderId = 99;
+    const dev = {
+      assets: {
+        list: vi.fn(async (args: any) => {
+          const name = args.query.search as string;
+          return okList('assets', [{ id: name === 'a.png' ? 1 : 2, short_filename: name, filename: `https://dev.example/${name}`, asset_folder_id: folderId, meta_data: {} }]);
+        }),
+      },
+      assetFolders: { list: vi.fn(async () => okData({ asset_folders: [{ id: folderId, name: 'Images', parent_id: null }] })) },
+    } as unknown as SyncClient;
+
+    const prod = {
+      assets: {
+        list: vi.fn(async () => okList('assets', [])), // no existing prod asset
+        upload: vi.fn(async (args: any) => ({ id: 500, short_filename: args.body.short_filename, filename: `https://prod.example/${args.body.short_filename}` })),
+        update: vi.fn(async () => undefined),
+        get: vi.fn(async (id: number) => okData({ id, short_filename: 'x', filename: 'https://prod.example/x.png' })),
+      },
+      assetFolders: {
+        list: vi.fn(async () => okData({ asset_folders: [] })), // folder missing in prod
+        create: vi.fn(async () => okData({ asset_folder: { id: 700, name: 'Images', parent_id: null } })),
+      },
+    } as unknown as SyncClient;
+
+    const result = await pushAssets({
+      devClient: dev, prodClient: prod, devSpaceId: 1, prodSpaceId: 2,
+      filenames: ['a.png', 'b.png'], logger: silentLogger,
+      download: vi.fn(async () => new ArrayBuffer(8)), dryRun: false,
+    });
+
+    // The shared dev folder resolves to a single prod create despite two concurrent assets.
+    expect((prod.assetFolders as any).create).toHaveBeenCalledTimes(1);
+    expect(result.counts).toMatchObject({ created: 2 });
+    expect((prod.assets as any).upload.mock.calls.every((c: any) => c[0].body.asset_folder_id === 700)).toBe(true);
+  });
+
   it('warns and marks the filename failed when no dev asset is found', async () => {
     const dev = { assets: { list: vi.fn(async () => okList('assets', [])) }, assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) } } as unknown as SyncClient;
     const prod = { assets: { list: vi.fn(async () => okList('assets', [])) }, assetFolders: { list: vi.fn(async () => okData({ asset_folders: [] })) } } as unknown as SyncClient;

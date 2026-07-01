@@ -37774,6 +37774,26 @@ async function pruneStalePresets({ client, spaceId, targetPresets, localPresetKe
     }
 }
 
+;// CONCATENATED MODULE: ./src/lib/p-map.ts
+/**
+ * Bounded-concurrency map. The SDK already throttles to ~6 req/s, so this is
+ * only to cap in-flight work (and therefore memory) when fanning out over many
+ * items — never to add throttling of our own.
+ */
+async function pMap(items, mapper, concurrency = 6) {
+    const results = new Array(items.length);
+    let cursor = 0;
+    const worker = async () => {
+        while (cursor < items.length) {
+            const index = cursor++;
+            results[index] = await mapper(items[index], index);
+        }
+    };
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
+}
+
 ;// CONCATENATED MODULE: ./src/assets/find.ts
 
 async function findDevAssets(client, spaceId, filename) {
@@ -37783,6 +37803,7 @@ async function findDevAssets(client, spaceId, filename) {
 }
 
 ;// CONCATENATED MODULE: ./src/assets/push.ts
+
 
 
 
@@ -37836,7 +37857,13 @@ async function pushAssets(options) {
     const succeededFilenames = new Set();
     const failedFilenames = new Set();
     const folderResolver = await createFolderResolver({ devClient, prodClient, devSpaceId, prodSpaceId, dryRun, logger });
-    for (const filename of filenames) {
+    // Process filenames concurrently (bounded by pMap). The SDK already throttles
+    // to ~6 req/s, so this only overlaps the per-asset round-trips (search →
+    // download → multi-step upload → update → re-get) that were previously fully
+    // serialized. Shared state (counts, maps, sets) is mutated only via synchronous
+    // ops, and the folder resolver memoizes in-flight lookups, so both are safe
+    // under concurrency.
+    await pMap(filenames, async (filename) => {
         let fileOk = true;
         try {
             const found = await findDevAssets(devClient, devSpaceId, filename);
@@ -37844,7 +37871,7 @@ async function pushAssets(options) {
             if (devMatches.length === 0) {
                 logger.warning(`No dev asset found for "${filename}".`);
                 failedFilenames.add(filename);
-                continue;
+                return;
             }
             if (found.exact.length === 0) {
                 logger.warning(`No exact short_filename match for "${filename}"; using ${devMatches.length} fuzzy result(s).`);
@@ -37874,7 +37901,7 @@ async function pushAssets(options) {
         else {
             failedFilenames.add(filename);
         }
-    }
+    });
     return {
         counts,
         assetMap,
@@ -37954,62 +37981,44 @@ async function createFolderResolver({ devClient, prodClient, devSpaceId, prodSpa
     const prodFolders = unwrap(await prodClient.assetFolders.list({ path: { space_id: prodSpaceId } }), 'assetFolders.list(prod)').asset_folders ?? [];
     const devById = new Map(devFolders.map((f) => [f.id, f]));
     const prodByName = new Map(prodFolders.map(f => [f.name, f]));
+    // Memoize the *promise* (not just the resolved id) per dev folder id: when
+    // assets are processed concurrently, many share a folder, and caching the
+    // in-flight promise makes them await one lookup/create instead of racing to
+    // create duplicate prod folders.
     const cache = new Map();
-    const resolve = async (devFolderId) => {
-        if (devFolderId == null) {
-            return undefined;
-        }
-        if (cache.has(devFolderId)) {
-            return cache.get(devFolderId);
-        }
-        const devFolder = devById.get(devFolderId);
-        if (!devFolder) {
-            return undefined;
-        }
+    const create = async (devFolder) => {
         const existing = prodByName.get(devFolder.name);
         if (existing) {
-            cache.set(devFolderId, existing.id);
             return existing.id;
         }
         if (dryRun) {
             logger.info(`[dry-run] would create asset folder "${devFolder.name}"`);
-            cache.set(devFolderId, undefined);
             return undefined;
         }
         const parentProdId = devFolder.parent_id != null ? await resolve(devFolder.parent_id) : undefined;
         try {
             const created = unwrap(await prodClient.assetFolders.create({ path: { space_id: prodSpaceId }, body: { asset_folder: { name: devFolder.name, parent_id: parentProdId } } }), `assetFolders.create(${devFolder.name})`).asset_folder;
             prodByName.set(created.name, created);
-            cache.set(devFolderId, created.id);
             return created.id;
         }
         catch (maybeError) {
             logger.warning(`Failed to create asset folder "${devFolder.name}"; placing asset at root: ${toError(maybeError).message}`);
-            cache.set(devFolderId, undefined);
             return undefined;
         }
     };
-    return { resolve };
-}
-
-;// CONCATENATED MODULE: ./src/lib/p-map.ts
-/**
- * Bounded-concurrency map. The SDK already throttles to ~6 req/s, so this is
- * only to cap in-flight work (and therefore memory) when fanning out over many
- * items — never to add throttling of our own.
- */
-async function pMap(items, mapper, concurrency = 6) {
-    const results = new Array(items.length);
-    let cursor = 0;
-    const worker = async () => {
-        while (cursor < items.length) {
-            const index = cursor++;
-            results[index] = await mapper(items[index], index);
+    const resolve = (devFolderId) => {
+        if (devFolderId == null) {
+            return Promise.resolve(undefined);
         }
+        let pending = cache.get(devFolderId);
+        if (!pending) {
+            const devFolder = devById.get(devFolderId);
+            pending = devFolder ? create(devFolder) : Promise.resolve(undefined);
+            cache.set(devFolderId, pending);
+        }
+        return pending;
     };
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-    await Promise.all(workers);
-    return results;
+    return { resolve };
 }
 
 ;// CONCATENATED MODULE: ./src/stories/ref-mapper.ts

@@ -18,6 +18,7 @@
  * captured in the map.
  */
 import type { Logger } from '../logger';
+import { pMap } from '../lib/p-map';
 import { toError, unwrap } from '../lib/result';
 import { emptyCounts, type Asset, type AssetFolder, type AssetMap, type AssetMapped, type ResourceCounts, type SyncClient } from '../types';
 import { findDevAssets } from './find';
@@ -102,7 +103,13 @@ export async function pushAssets(options: PushAssetsOptions): Promise<AssetPushR
 
   const folderResolver = await createFolderResolver({ devClient, prodClient, devSpaceId, prodSpaceId, dryRun, logger });
 
-  for (const filename of filenames) {
+  // Process filenames concurrently (bounded by pMap). The SDK already throttles
+  // to ~6 req/s, so this only overlaps the per-asset round-trips (search →
+  // download → multi-step upload → update → re-get) that were previously fully
+  // serialized. Shared state (counts, maps, sets) is mutated only via synchronous
+  // ops, and the folder resolver memoizes in-flight lookups, so both are safe
+  // under concurrency.
+  await pMap(filenames, async (filename) => {
     let fileOk = true;
     try {
       const found = await findDevAssets(devClient, devSpaceId, filename);
@@ -110,7 +117,7 @@ export async function pushAssets(options: PushAssetsOptions): Promise<AssetPushR
       if (devMatches.length === 0) {
         logger.warning(`No dev asset found for "${filename}".`);
         failedFilenames.add(filename);
-        continue;
+        return;
       }
       if (found.exact.length === 0) {
         logger.warning(`No exact short_filename match for "${filename}"; using ${devMatches.length} fuzzy result(s).`);
@@ -137,7 +144,7 @@ export async function pushAssets(options: PushAssetsOptions): Promise<AssetPushR
     }
     if (fileOk) { succeededFilenames.add(filename); }
     else { failedFilenames.add(filename); }
-  }
+  });
 
   return {
     counts,
@@ -246,22 +253,17 @@ async function createFolderResolver({
 
   const devById = new Map<number, AssetFolder>(devFolders.map((f: AssetFolder) => [f.id, f]));
   const prodByName = new Map<string, AssetFolder>(prodFolders.map(f => [f.name, f]));
-  const cache = new Map<number, number | undefined>();
+  // Memoize the *promise* (not just the resolved id) per dev folder id: when
+  // assets are processed concurrently, many share a folder, and caching the
+  // in-flight promise makes them await one lookup/create instead of racing to
+  // create duplicate prod folders.
+  const cache = new Map<number, Promise<number | undefined>>();
 
-  const resolve = async (devFolderId: number | undefined): Promise<number | undefined> => {
-    if (devFolderId == null) { return undefined; }
-    if (cache.has(devFolderId)) { return cache.get(devFolderId); }
-    const devFolder = devById.get(devFolderId);
-    if (!devFolder) { return undefined; }
-
+  const create = async (devFolder: AssetFolder): Promise<number | undefined> => {
     const existing = prodByName.get(devFolder.name);
-    if (existing) {
-      cache.set(devFolderId, existing.id);
-      return existing.id;
-    }
+    if (existing) { return existing.id; }
     if (dryRun) {
       logger.info(`[dry-run] would create asset folder "${devFolder.name}"`);
-      cache.set(devFolderId, undefined);
       return undefined;
     }
 
@@ -272,14 +274,23 @@ async function createFolderResolver({
         `assetFolders.create(${devFolder.name})`,
       ) as any).asset_folder as AssetFolder;
       prodByName.set(created.name, created);
-      cache.set(devFolderId, created.id);
       return created.id;
     }
     catch (maybeError) {
       logger.warning(`Failed to create asset folder "${devFolder.name}"; placing asset at root: ${toError(maybeError).message}`);
-      cache.set(devFolderId, undefined);
       return undefined;
     }
+  };
+
+  const resolve = (devFolderId: number | undefined): Promise<number | undefined> => {
+    if (devFolderId == null) { return Promise.resolve(undefined); }
+    let pending = cache.get(devFolderId);
+    if (!pending) {
+      const devFolder = devById.get(devFolderId);
+      pending = devFolder ? create(devFolder) : Promise.resolve(undefined);
+      cache.set(devFolderId, pending);
+    }
+    return pending;
   };
 
   return { resolve };
