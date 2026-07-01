@@ -22,7 +22,7 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 
 const listByQuery = (client: SyncClient, spaceId: number, query: Record<string, unknown>, label: string): Promise<Story[]> =>
   listAll(
-    page => client.stories.list({ path: { space_id: spaceId }, query: { ...query, page } } as any),
+    page => client.stories.list({ path: { space_id: spaceId }, query: { ...query, page, per_page: 100 } } as any),
     (data: any) => (data.stories ?? []) as Story[],
     label,
   );

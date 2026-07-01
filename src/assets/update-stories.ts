@@ -53,7 +53,7 @@ export async function updateStoriesAssetRefs(options: UpdateStoriesOptions): Pro
   for (const { old, new: replacement } of prodAssetMap.values()) {
     const term = normalizeAssetUrl(old?.filename ?? replacement.filename);
     const matches = await listAll(
-      page => prodClient.stories.list({ path: { space_id: prodSpaceId }, query: { page, reference_search: term } }),
+      page => prodClient.stories.list({ path: { space_id: prodSpaceId }, query: { page, per_page: 100, reference_search: term } }),
       (data: any) => (data.stories ?? []) as Story[],
       `stories.list(prod, ref=${term})`,
     );

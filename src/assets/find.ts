@@ -16,7 +16,7 @@ export interface FindAssetsResult {
 
 export async function findDevAssets(client: SyncClient, spaceId: number, filename: string): Promise<FindAssetsResult> {
   const all = await listAll(
-    page => client.assets.list({ path: { space_id: spaceId }, query: { page, search: filename } }),
+    page => client.assets.list({ path: { space_id: spaceId }, query: { page, per_page: 100, search: filename } }),
     (data: any) => (data.assets ?? []) as Asset[],
     `assets.list(search=${filename})`,
   );

@@ -15,7 +15,7 @@ import type { SpaceComponentsData, TargetComponentsState } from './graph';
 export async function fetchAllComponentsData(client: SyncClient, spaceId: number): Promise<SpaceComponentsData> {
   const [components, groups, presets, internalTags] = await Promise.all([
     listAll(
-      page => client.components.list({ path: { space_id: spaceId }, query: { page } }),
+      page => client.components.list({ path: { space_id: spaceId }, query: { page, per_page: 100 } }),
       (data: any) => (data.components ?? []) as Component[],
       'components.list',
     ),
@@ -28,7 +28,7 @@ export async function fetchAllComponentsData(client: SyncClient, spaceId: number
       return (data.presets ?? []) as Preset[];
     })(),
     listAll(
-      page => client.internalTags.list({ path: { space_id: spaceId }, query: { page, by_object_type: 'component' } }),
+      page => client.internalTags.list({ path: { space_id: spaceId }, query: { page, per_page: 100, by_object_type: 'component' } }),
       (data: any) => (data.internal_tags ?? []) as InternalTag[],
       'internalTags.list',
     ),

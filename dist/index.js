@@ -37393,7 +37393,7 @@ async function listAll(fetchPage, selectItems, context = 'list') {
 /** Lists every component/group/preset/tag in a space. */
 async function fetchAllComponentsData(client, spaceId) {
     const [components, groups, presets, internalTags] = await Promise.all([
-        listAll(page => client.components.list({ path: { space_id: spaceId }, query: { page } }), (data) => (data.components ?? []), 'components.list'),
+        listAll(page => client.components.list({ path: { space_id: spaceId }, query: { page, per_page: 100 } }), (data) => (data.components ?? []), 'components.list'),
         (async () => {
             const data = unwrap(await client.componentFolders.list({ path: { space_id: spaceId } }), 'componentFolders.list');
             return (data.component_groups ?? []);
@@ -37402,7 +37402,7 @@ async function fetchAllComponentsData(client, spaceId) {
             const data = unwrap(await client.presets.list({ path: { space_id: spaceId } }), 'presets.list');
             return (data.presets ?? []);
         })(),
-        listAll(page => client.internalTags.list({ path: { space_id: spaceId }, query: { page, by_object_type: 'component' } }), (data) => (data.internal_tags ?? []), 'internalTags.list'),
+        listAll(page => client.internalTags.list({ path: { space_id: spaceId }, query: { page, per_page: 100, by_object_type: 'component' } }), (data) => (data.internal_tags ?? []), 'internalTags.list'),
     ]);
     return { components, groups, presets, internalTags };
 }
@@ -37777,7 +37777,7 @@ async function pruneStalePresets({ client, spaceId, targetPresets, localPresetKe
 ;// CONCATENATED MODULE: ./src/assets/find.ts
 
 async function findDevAssets(client, spaceId, filename) {
-    const all = await listAll(page => client.assets.list({ path: { space_id: spaceId }, query: { page, search: filename } }), (data) => (data.assets ?? []), `assets.list(search=${filename})`);
+    const all = await listAll(page => client.assets.list({ path: { space_id: spaceId }, query: { page, per_page: 100, search: filename } }), (data) => (data.assets ?? []), `assets.list(search=${filename})`);
     const exact = all.filter(asset => asset.short_filename === filename);
     return { exact, all };
 }
@@ -38233,7 +38233,7 @@ async function updateStoriesAssetRefs(options) {
     const candidates = new Map();
     for (const { old, new: replacement } of prodAssetMap.values()) {
         const term = normalizeAssetUrl(old?.filename ?? replacement.filename);
-        const matches = await listAll(page => prodClient.stories.list({ path: { space_id: prodSpaceId }, query: { page, reference_search: term } }), (data) => (data.stories ?? []), `stories.list(prod, ref=${term})`);
+        const matches = await listAll(page => prodClient.stories.list({ path: { space_id: prodSpaceId }, query: { page, per_page: 100, reference_search: term } }), (data) => (data.stories ?? []), `stories.list(prod, ref=${term})`);
         for (const story of matches) {
             candidates.set(story.id, story);
         }
@@ -38376,7 +38376,7 @@ const chunk = (items, size) => {
     }
     return out;
 };
-const listByQuery = (client, spaceId, query, label) => listAll(page => client.stories.list({ path: { space_id: spaceId }, query: { ...query, page } }), (data) => (data.stories ?? []), label);
+const listByQuery = (client, spaceId, query, label) => listAll(page => client.stories.list({ path: { space_id: spaceId }, query: { ...query, page, per_page: 100 } }), (data) => (data.stories ?? []), label);
 /**
  * Resolves the requested slugs (and all ancestor folders) to full dev stories.
  * Returns the de-duplicated full stories plus the requested slugs that did not
